@@ -1,0 +1,16 @@
+numpy
+pandas
+matplotlib
+scipy
+Pillow
+tqdm
+cdsapi
+xarray
+scikit-learn
+seaborn
+tables
+psutil
+arrow
+fastparquet
+netcdf4
+h5netcdf
