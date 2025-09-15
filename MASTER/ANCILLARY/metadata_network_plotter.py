@@ -485,7 +485,7 @@ def main():
         with PdfPages(pdf_path) as pdf:
             for png_path in png_paths:
                 img = mpimg.imread(png_path)
-                fig, ax = plt.subplots(figsize=(8, 6))
+                fig, ax = plt.subplots(figsize=(14, 10))
                 ax.imshow(img)
                 ax.axis('off')
                 pdf.savefig(fig, bbox_inches='tight')

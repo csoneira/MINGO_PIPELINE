@@ -5,6 +5,13 @@ import os
 import subprocess
 import sys
 
+import io
+import subprocess
+from datetime import datetime
+
+import matplotlib.pyplot as plt
+import pandas as pd
+
 # Check if a station number is provided
 if len(sys.argv) < 2:
     print("Error: No station number provided.")
@@ -42,8 +49,9 @@ bot = telebot.TeleBot(api_key)
 #bot = telebot.TeleBot("8012230734:AAFN1MH_9zbQ3RRoXnKBqalhkJSiEB3V3DE")
 
 passwords = {
-    '6445882713': 'mingo@1234',
-    'user2': 'password2',
+    '6445882713': 'mingo@1234', # Cayetano
+    '6888390801': 'mingo_ito', # Victor Nouvilas
+    '5948691038': 'lidka_mingo', # Lidka
     # Add more users and passwords as needed
 }
 
@@ -105,7 +113,7 @@ def send_welcome(message):
 
 @bot.message_handler(commands=['send_voltage'])
 def send_voltage(message):
-    binary_path = '/home/rpcuser/bin/HV -b 0'
+    binary_path = '/home/rpcuser/bin/HV/hv -b 0'
     print(binary_path)
 
     try:
@@ -417,6 +425,12 @@ def gas_weight_measurement(message):
                 f.write(log_entry)
 
             bot.send_message(chat_id, f"Logged: {log_entry.strip()}")
+            
+            bot.send_message(chat_id, f"Creating the log file division")
+            SCRIPT_DIR = os.path.expanduser("~/station_automation_scripts/bot_scripts")
+            script_path = os.path.join(SCRIPT_DIR, "split_gas_logs.sh")
+            subprocess.run([script_path], check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
 
         except ValueError:
             bot.send_message(chat_id, "Invalid input. Please enter a numeric value in kg with at least one decimal digit (e.g., 1.2).")
@@ -424,61 +438,455 @@ def gas_weight_measurement(message):
     bot.register_next_step_handler(message, process_input)
 
 
+
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from datetime import datetime
+import io
+import os
+
+def parse_sensor_data(bash_command):
+    """Parse sensor data from bash command output"""
+    output = os.popen(bash_command).read()
+    lines = output.strip().split('\n')
+    
+    timestamps = []
+    temperatures = []
+    humidities = []
+    pressures = []
+    
+    for line in lines:
+        if line.strip():
+            parts = line.split()
+            if len(parts) >= 4:
+                try:
+                    # Parse timestamp
+                    timestamp_str = f"{parts[0]} {parts[1]}"
+                    timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                    timestamps.append(timestamp)
+                    
+                    # Parse sensor values
+                    temperatures.append(float(parts[2]))
+                    humidities.append(float(parts[3]))
+                    pressures.append(float(parts[4]))
+                except (ValueError, IndexError):
+                    continue
+    
+    return timestamps, temperatures, humidities, pressures
+
+number_of_plot_lines = 10000
+
+@bot.message_handler(commands=['plot_temperature'])
+def plot_temperature(message):
+    try:
+        # Get internal data (bus1)
+        internal_bash = f"tail -n {number_of_plot_lines} /home/rpcuser/logs/clean_sensors_bus1*"
+        int_times, int_temps, _, _ = parse_sensor_data(internal_bash)
+        
+        # Get external data (bus0)
+        external_bash = f"tail -n {number_of_plot_lines} /home/rpcuser/logs/clean_sensors_bus0*"
+        ext_times, ext_temps, _, _ = parse_sensor_data(external_bash)
+        
+        # Create plot
+        plt.figure(figsize=(12, 6))
+        plt.plot(int_times, int_temps, 'r-o', label='Internal Temperature', linewidth=2, markersize=4)
+        plt.plot(ext_times, ext_temps, 'b-o', label='External Temperature', linewidth=2, markersize=4)
+        
+        plt.title('Temperature Comparison - Internal vs External', fontsize=14, fontweight='bold')
+        plt.xlabel('Time', fontsize=12)
+        plt.ylabel('Temperature (°C)', fontsize=12)
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Format x-axis
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=1))
+        plt.xticks(rotation=45)
+        
+        plt.tight_layout()
+        
+        # Save plot to bytes
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+        buf.seek(0)
+        plt.close()
+        
+        # Send plot to telegram
+        bot.send_photo(message.chat.id, buf, caption="Temperature Time Series")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Error generating temperature plot: {str(e)}")
+
+@bot.message_handler(commands=['plot_pressure'])
+def plot_pressure(message):
+    try:
+        # Get internal data (bus1)
+        internal_bash = f"tail -n {number_of_plot_lines} /home/rpcuser/logs/clean_sensors_bus1*"
+        int_times, _, _, int_pressures = parse_sensor_data(internal_bash)
+        
+        # Get external data (bus0)
+        external_bash = f"tail -n {number_of_plot_lines} /home/rpcuser/logs/clean_sensors_bus0*"
+        ext_times, _, _, ext_pressures = parse_sensor_data(external_bash)
+        
+        # Create plot
+        plt.figure(figsize=(12, 6))
+        plt.plot(int_times, int_pressures, 'r-o', label='Internal Pressure', linewidth=2, markersize=4)
+        plt.plot(ext_times, ext_pressures, 'b-o', label='External Pressure', linewidth=2, markersize=4)
+        
+        plt.title('Pressure Comparison - Internal vs External', fontsize=14, fontweight='bold')
+        plt.xlabel('Time', fontsize=12)
+        plt.ylabel('Pressure (mbar)', fontsize=12)
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Format x-axis
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=1))
+        plt.xticks(rotation=45)
+        
+        plt.tight_layout()
+        
+        # Save plot to bytes
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+        buf.seek(0)
+        plt.close()
+        
+        # Send plot to telegram
+        bot.send_photo(message.chat.id, buf, caption="Pressure Time Series")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Error generating pressure plot: {str(e)}")
+
+@bot.message_handler(commands=['plot_RH'])
+def plot_RH(message):
+    try:
+        # Get internal data (bus1)
+        internal_bash = f"tail -n {number_of_plot_lines} /home/rpcuser/logs/clean_sensors_bus1*"
+        int_times, _, int_humidity, _ = parse_sensor_data(internal_bash)
+        
+        # Get external data (bus0)
+        external_bash = f"tail -n {number_of_plot_lines} /home/rpcuser/logs/clean_sensors_bus0*"
+        ext_times, _, ext_humidity, _ = parse_sensor_data(external_bash)
+        
+        # Create plot
+        plt.figure(figsize=(12, 6))
+        plt.plot(int_times, int_humidity, 'r-o', label='Internal Relative Humidity', linewidth=2, markersize=4)
+        plt.plot(ext_times, ext_humidity, 'b-o', label='External Relative Humidity', linewidth=2, markersize=4)
+        
+        plt.title('Relative Humidity Comparison - Internal vs External', fontsize=14, fontweight='bold')
+        plt.xlabel('Time', fontsize=12)
+        plt.ylabel('Relative Humidity (%)', fontsize=12)
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Format x-axis
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=1))
+        plt.xticks(rotation=45)
+        
+        plt.tight_layout()
+        
+        # Save plot to bytes
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+        buf.seek(0)
+        plt.close()
+        
+        # Send plot to telegram
+        bot.send_photo(message.chat.id, buf, caption="Relative Humidity Time Series")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Error generating humidity plot: {str(e)}")
+
+
+def parse_trb_rates_data(bash_command):
+    """Parse TRB rates data from bash command output"""
+    output = os.popen(bash_command).read()
+    lines = output.strip().split('\n')
+    
+    timestamps = []
+    asserted = []
+    edge = []
+    accepted = []
+    m1 = []
+    m2 = []
+    m3 = []
+    m4 = []
+    cm1 = []
+    cm2 = []
+    cm3 = []
+    cm4 = []
+    
+    for line in lines:
+        if line.strip():
+            parts = line.split()
+            if len(parts) >= 13:  # Expecting 13 columns based on your header
+                try:
+                    # Parse timestamp
+                    timestamp_str = f"{parts[0]} {parts[1]}"
+                    timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                    timestamps.append(timestamp)
+                    
+                    # Parse TRB rates values
+                    asserted.append(float(parts[2]))
+                    edge.append(float(parts[3]))
+                    accepted.append(float(parts[4]))
+                    m1.append(float(parts[5]))
+                    m2.append(float(parts[6]))
+                    m3.append(float(parts[7]))
+                    m4.append(float(parts[8]))
+                    cm1.append(float(parts[9]))
+                    cm2.append(float(parts[10]))
+                    cm3.append(float(parts[11]))
+                    cm4.append(float(parts[12]))
+                except (ValueError, IndexError):
+                    continue
+    
+    return (timestamps, asserted, edge, accepted, m1, m2, m3, m4, cm1, cm2, cm3, cm4)
+
+@bot.message_handler(commands=['plot_asserted_edge_accepted'])
+def plot_asserted_edge_accepted(message):
+    try:
+        # Get TRB rates data
+        trb_bash = f"tail -n {number_of_plot_lines} /home/rpcuser/logs/clean_rates*"
+        timestamps, asserted, edge, accepted, _, _, _, _, _, _, _, _ = parse_trb_rates_data(trb_bash)
+        
+        # Create plot
+        plt.figure(figsize=(12, 6))
+        plt.plot(timestamps, asserted, 'r-o', label='Asserted', linewidth=2, markersize=4)
+        plt.plot(timestamps, edge, 'g-o', label='Edge', linewidth=2, markersize=4)
+        plt.plot(timestamps, accepted, 'b-o', label='Accepted', linewidth=2, markersize=4)
+        
+        plt.title('TRB Rates - Asserted, Edge, Accepted', fontsize=14, fontweight='bold')
+        plt.xlabel('Time', fontsize=12)
+        plt.ylabel('Rate', fontsize=12)
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Format x-axis
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=1))
+        plt.xticks(rotation=45)
+        
+        plt.tight_layout()
+        
+        # Save plot to bytes
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+        buf.seek(0)
+        plt.close()
+        
+        # Send plot to telegram
+        bot.send_photo(message.chat.id, buf, caption="TRB Rates - Asserted, Edge, Accepted")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Error generating TRB rates plot: {str(e)}")
+
+@bot.message_handler(commands=['plot_multiplexers'])
+def plot_multiplexers(message):
+    try:
+        # Get TRB rates data
+        trb_bash = f"tail -n {number_of_plot_lines} /home/rpcuser/logs/clean_rates*"
+        timestamps, _, _, _, m1, m2, m3, m4, _, _, _, _ = parse_trb_rates_data(trb_bash)
+        
+        # Create plot
+        plt.figure(figsize=(12, 6))
+        plt.plot(timestamps, m1, 'r-o', label='Multiplexer 1', linewidth=2, markersize=4)
+        plt.plot(timestamps, m2, 'g-o', label='Multiplexer 2', linewidth=2, markersize=4)
+        plt.plot(timestamps, m3, 'b-o', label='Multiplexer 3', linewidth=2, markersize=4)
+        plt.plot(timestamps, m4, 'm-o', label='Multiplexer 4', linewidth=2, markersize=4)
+        
+        plt.title('TRB Rates - Multiplexers 1-4', fontsize=14, fontweight='bold')
+        plt.xlabel('Time', fontsize=12)
+        plt.ylabel('Rate', fontsize=12)
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Format x-axis
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=1))
+        plt.xticks(rotation=45)
+        
+        plt.tight_layout()
+        
+        # Save plot to bytes
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+        buf.seek(0)
+        plt.close()
+        
+        # Send plot to telegram
+        bot.send_photo(message.chat.id, buf, caption="TRB Rates - Multiplexers 1-4")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Error generating multiplexers plot: {str(e)}")
+
+@bot.message_handler(commands=['plot_coincidence_modules'])
+def plot_coincidence_modules(message):
+    try:
+        # Get TRB rates data
+        trb_bash = f"tail -n {number_of_plot_lines} /home/rpcuser/logs/clean_rates*"
+        timestamps, _, _, _, _, _, _, _, cm1, cm2, cm3, cm4 = parse_trb_rates_data(trb_bash)
+        
+        # Create plot
+        plt.figure(figsize=(12, 6))
+        plt.plot(timestamps, cm1, 'r-o', label='Coincidence Module 1', linewidth=2, markersize=4)
+        plt.plot(timestamps, cm2, 'g-o', label='Coincidence Module 2', linewidth=2, markersize=4)
+        plt.plot(timestamps, cm3, 'b-o', label='Coincidence Module 3', linewidth=2, markersize=4)
+        plt.plot(timestamps, cm4, 'm-o', label='Coincidence Module 4', linewidth=2, markersize=4)
+        
+        plt.title('TRB Rates - Coincidence Modules 1-4', fontsize=14, fontweight='bold')
+        plt.xlabel('Time', fontsize=12)
+        plt.ylabel('Rate', fontsize=12)
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Format x-axis
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=1))
+        plt.xticks(rotation=45)
+        
+        plt.tight_layout()
+        
+        # Save plot to bytes
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+        buf.seek(0)
+        plt.close()
+        
+        # Send plot to telegram
+        bot.send_photo(message.chat.id, buf, caption="TRB Rates - Coincidence Modules 1-4")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Error generating coincidence modules plot: {str(e)}")
+
+@bot.message_handler(commands=['plot_all_trb_rates'])
+def plot_all_trb_rates(message):
+    try:
+        # Get TRB rates data
+        trb_bash = f"tail -n {number_of_plot_lines} /home/rpcuser/logs/clean_rates*"
+        timestamps, asserted, edge, accepted, m1, m2, m3, m4, cm1, cm2, cm3, cm4 = parse_trb_rates_data(trb_bash)
+        
+        # Create subplots
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 12))
+        
+        # Plot 1: Asserted, Edge, Accepted
+        ax1.plot(timestamps, asserted, 'r-o', label='Asserted', linewidth=2, markersize=3)
+        ax1.plot(timestamps, edge, 'g-o', label='Edge', linewidth=2, markersize=3)
+        ax1.plot(timestamps, accepted, 'b-o', label='Accepted', linewidth=2, markersize=3)
+        ax1.set_title('TRB Rates - Asserted, Edge, Accepted', fontsize=12, fontweight='bold')
+        ax1.set_ylabel('Rate', fontsize=10)
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        ax1.tick_params(axis='x', rotation=45)
+        
+        # Plot 2: Multiplexers
+        ax2.plot(timestamps, m1, 'r-o', label='Multiplexer 1', linewidth=2, markersize=3)
+        ax2.plot(timestamps, m2, 'g-o', label='Multiplexer 2', linewidth=2, markersize=3)
+        ax2.plot(timestamps, m3, 'b-o', label='Multiplexer 3', linewidth=2, markersize=3)
+        ax2.plot(timestamps, m4, 'm-o', label='Multiplexer 4', linewidth=2, markersize=3)
+        ax2.set_title('TRB Rates - Multiplexers 1-4', fontsize=12, fontweight='bold')
+        ax2.set_ylabel('Rate', fontsize=10)
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        ax2.tick_params(axis='x', rotation=45)
+        
+        # Plot 3: Coincidence Modules
+        ax3.plot(timestamps, cm1, 'r-o', label='Coincidence Module 1', linewidth=2, markersize=3)
+        ax3.plot(timestamps, cm2, 'g-o', label='Coincidence Module 2', linewidth=2, markersize=3)
+        ax3.plot(timestamps, cm3, 'b-o', label='Coincidence Module 3', linewidth=2, markersize=3)
+        ax3.plot(timestamps, cm4, 'm-o', label='Coincidence Module 4', linewidth=2, markersize=3)
+        ax3.set_title('TRB Rates - Coincidence Modules 1-4', fontsize=12, fontweight='bold')
+        ax3.set_xlabel('Time', fontsize=10)
+        ax3.set_ylabel('Rate', fontsize=10)
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        ax3.tick_params(axis='x', rotation=45)
+        
+        plt.tight_layout()
+        
+        # Save plot to bytes
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+        buf.seek(0)
+        plt.close()
+        
+        # Send plot to telegram
+        bot.send_photo(message.chat.id, buf, caption="Complete TRB Rates Overview")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Error generating complete TRB rates plot: {str(e)}")
+
+
 # -----------------------------------------------------------------------------------------
+
 
 @bot.message_handler(func=lambda message: True)
 def echo_all(message):
-	string = '\
---------------------------------------------\n\
-Useful commands for miniTRASGO bot:\n\
---------------------------------------------\n\
-\n\
-General stuff:\n\
----------------------\n\
-- /get_username: show your name, username and ID. Provide this info to csoneira@ucm.es.\n\
---------------------------------------------\n\
-Monitoring:\n\
----------------------\n\
-- /start: greetings.\n\
-- /get_chat_id: send the ChatID.\n\
-- /send_voltage: send a report on the high voltage in the moment.\n\
-- /send_gas_flow: send the last values of the gas flow in each RPC.\n\
-- /send_internal_environment: send the last values given by the internal environment sensors.\n\
-- /send_external_environment: send the last values given by the external environment sensors.\n\
-- /send_TRB_rates: send the last rates triggered in the TRB.\n\
---------------------------------------------\n\
-\n\
-Operation:\n\
----------------------\n\
-- /set_data_control_system: script to perform the connection through the I2C protocol from the mingo PC to the hub containing the environment, HV and gas flow sensors. (CURRENTLY NOT IN ENABLED)\n\
-- /start_daq: initiate the Data Acquisition System so it will be ready to measure. It does not store data.\n\
-- /turn_on_hv: self-explanatory.\n\
-- /turn_off_hv: self-explanatory, right?\n\
-- /start_run: initiate the storing of the data that the daq is receiving.\n\
-- /stop_run: kills the run.\n\
-- /any_reboot: reboots the mingo PC. Does not affect the HV.\n\
-- /safe_reboot: turns off the HV, waits five minutes and reboots the mingo PC.\n\
---------------------------------------------\n\
-\n\
-Report and plots:\n\
------------------------------\n\
-- /create_report: creates the pdf report.\n\
-- /send_original_report: send the pdf report generated in the mingo itself.\n\
-- /send_monitoring_report: send the pdf report with the information per channel.\n\
-- /send_daq_report: send the pdf report of charges and multiplicities processed over one day.\n\
-- /send_results_vs_time_report: send the pdf report of evolution of some quantities as well as logs.\n\
-- /send_weekly_results_report: same, but for the previous week.\n\
---------------------------------------------\n\
-\n\
-Emergency and assistance:\n\
------------------------------\n\
-- /restart_tunnel: closes the tunnel so it reopens automatically.\n\
-\n\
-Logging tools:\n\
------------------------------\n\
-- /gas_weight_measurement: manually log the weight of the gas bottle in kilograms (must include at least one decimal digit).\n\
-'
-	bot.send_message(message.chat.id, string)
+    string = '''
+===========================================
+            miniTRASGO Bot - Command Guide
+===========================================
+
+    General Commands:
+    ---------------------
+    - /start: Greet the bot and receive a welcome message.
+    - /get_username: Show your username, ID, and other details (share this info with csoneira@ucm.es).
+    - /get_chat_id: Retrieve your unique Chat ID.
+
+    -------------------------------------------
+
+    Monitoring Commands (Text Reports):
+    -------------------------------------
+    - /send_voltage: Get a report on the current high voltage.
+    - /send_gas_flow: Receive the latest gas flow values for each RPC.
+    - /send_internal_environment: Get data from the internal environment sensors.
+    - /send_external_environment: Get data from the external environment sensors.
+    - /send_TRB_rates: Receive the latest triggered TRB rates (Asserted, Edge, Accepted).
+
+    -------------------------------------------
+
+    Monitoring Commands (Plots):
+    -------------------------------------
+    - /plot_temperature: Plot temperature (°C) data from both internal and external sensors.
+    - /plot_pressure: Plot pressure (mbar) data from both internal and external sensors.
+    - /plot_RH: Plot relative humidity (%) data from both internal and external sensors.
+    - /plot_asserted_edge_accepted: Plot TRB rates (Asserted, Edge, Accepted).
+    - /plot_multiplexers: Plot the rates of all 4 multiplexers.
+    - /plot_coincidence_modules: Plot the rates of all 4 coincidence modules.
+    - /plot_all_trb_rates: View a comprehensive plot with all TRB rates in 3 subplots.
+
+    -------------------------------------------
+
+    Operation Commands:
+    ---------------------
+    - /set_data_control_system: (Currently Disabled) Connect via I2C from the mingo PC to the hub with environment, HV, and gas flow sensors.
+    - /start_daq: Prepare the Data Acquisition System (DAQ) for measurements (data is not stored).
+    - /turn_on_hv: Turn on the high voltage.
+    - /turn_off_hv: Turn off the high voltage.
+    - /start_run: Start recording data from the DAQ.
+    - /stop_run: Stop the current data recording.
+    - /any_reboot: Reboot the mingo PC (no impact on HV).
+
+    -------------------------------------------
+
+    Emergency & Assistance:
+    ---------------------------
+    - /restart_tunnel: Close the tunnel, it will automatically reopen.
+
+    -------------------------------------------
+
+    Logging Tools:
+    -----------------
+    - /gas_weight_measurement: Manually log the weight of the gas bottle in kilograms (ensure it includes at least one decimal place).
+
+    ===========================================
+    '''
+
+    bot.send_message(message.chat.id, string)
 
 bot.infinity_polling()
-
