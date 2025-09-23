@@ -399,7 +399,7 @@ save_calibrations = True
 # save_full_data = False
 presentation = False
 presentation_plots = False
-force_replacement = True # Creates a new datafile even if there is already one that looks complete
+force_replacement = False # Creates a new datafile even if there is already one that looks complete
 article_format = False
 
 # Charge calibration to fC -------------------------

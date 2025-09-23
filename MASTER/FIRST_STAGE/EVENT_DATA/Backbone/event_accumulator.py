@@ -128,7 +128,7 @@ create_essential_plots = False
 create_very_essential_plots = False
 save_plots = False
 create_pdf = False
-force_replacement = True  # Creates a new datafile even if there is already one that looks complete
+force_replacement = False  # Creates a new datafile even if there is already one that looks complete
 show_plots = False
 
 # Angular region selection
